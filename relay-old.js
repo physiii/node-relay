@@ -35,7 +35,7 @@ server.listen(port);
 console.log('clients on port ' + port);
 
 // --------------  reply to token request  ----------------- //
-/*app.post('/tokens', function(req, res) {
+app.post('/tokens', function(req, res) {
   console.log('hit post request');
   var mac = req.body.mac;
   var device_name = req.body.device_name;
@@ -49,7 +49,7 @@ console.log('clients on port ' + port);
   }
 
   res.send("{\"token\":\""+_token+"\"}");
-});*/
+});
 
 // --------------  websocket server for devices  ----------------- //
 var ws_port = 4000;
@@ -62,11 +62,14 @@ wss.on('connection', function connection(ws) {
   device_object = { mac:"init", token:"init", socket:ws };
   device_objects.push(device_object);
 
+  console.info('device connected');
+
   try { ws.send('Hello from relay server!') }
   catch (e) { console.log("error: " + e) };
   
   ws.on('message', function incoming(message) {
     var msg = {};
+    
     try { msg = JSON.parse(message) }
     catch (e) { console.log("invalid json") };
 
@@ -74,32 +77,23 @@ wss.on('connection', function connection(ws) {
     var magnitude = msg.magnitude;
     var mac = msg.mac;
     
-    // --------------  respond to ping requests  ----------------- //    
-    if (msg.cmd == "png_test") {
-      command = "png_test";
-      try { ws.send('command' + command) }
-      catch (e) { console.log("reply error | " + e) };        
-      console.log(mac + " | received ping, sending reply ");
-    }
-
-    // --------------  respond to token requests  ----------------- //    
     if (msg.cmd == "tok_req") {
       console.log("getting token for " + mac);
-      var post_data = msg;  
+      var post_data = { mac:mac };  
       var response = request.post(
-        'http://pyfi.org/php/add_device.php',
+        'http://pyfi.org/php/make_token.php',
         {form: post_data},
         function (error, response, data) {
           if (!error && response.statusCode == 200) {
             console.log('make_token.php | ' + data);
             try { data = JSON.parse(data) }
             catch (e) { console.log("invalid json") };
-            try { ws.send('token' + data.token) }            
+            try { ws.send('token' + data[0].token) }
             catch (e) { console.log("reply error | " + e) };
           }
       });
     }
-    
+        
     for (var i=0; i < device_objects.length; i++) {
       _socket = device_objects[i].socket;
       _token = device_objects[i].token;
@@ -110,24 +104,7 @@ wss.on('connection', function connection(ws) {
         console.log("linked token and mac with socket");
       }
     }
-    
-    // --------------  relay device command to linked sockets  ----------------- //
-    //if (msg.device_type === "garage_opener") {
-      var token = msg.token;
-      for (var i=0; i < client_objects.length; i++) {
-        _token = client_objects[i].token;
-        if (_token && _token === token) {
-          _socket = client_objects[i].socket;
-          _mac = client_objects[i].mac;
-          _socket.emit('garage_opener', msg );  
-          console.log(mac + " | sending message to client " + _mac);
-        }
-      }
-    //}        
-    if (msg.png_test) {
-      console.log("received ping, sending reply");
-    }
-    // --------------  relay device command to linked sockets  ----------------- //
+
     if (magnitude > 1000) {
       var post_data = { token:token, mac:mac, magnitude:magnitude };  
       var response = request.post('http://pyfi.org/php/get_assoc_macs.php', {form: post_data},
@@ -179,7 +156,7 @@ wss.on('connection', function connection(ws) {
       });      
     }
       
-    /*for (var i=0; i < client_objects.length; i++) {          
+    for (var i=0; i < client_objects.length; i++) {          
       _token = client_objects[i].token;      
       if (_token && _token === token) {
         _socket = client_objects[i].socket;
@@ -187,9 +164,10 @@ wss.on('connection', function connection(ws) {
         _socket.emit('window_sensor', { token:token, mac:mac, magnitude:magnitude });      
         console.log(mac + " | relaying data to client " + magnitude);
       }
-    }*/
-    /*try { ws.send('ok') }
-    catch (e) { console.log("reply error: " + e) };*/
+    }
+    console.log(mac + " | " + magnitude + " | " + token);
+    try { ws.send('ok') }
+    catch (e) { console.log("reply error: " + e) };
   });
 
   ws.on('close', function close() {
@@ -215,14 +193,13 @@ wss.on('connection', function connection(ws) {
 io.on('connection', function (socket) {
   console.info(socket.id + " | client connected" );
   client_objects.push(socket);
-
+  
   socket.on('media', function (data) {
     var token = data.token;
     for (var i=0; i < client_objects.length; i++) {
       _socket = client_objects[i].socket;
       _token = client_objects[i].token;
-
-      //console.log("incoming token " + token + " | client_objects " + client_objects[i].token);
+      console.log("incoming token " + token + " | client_objects " + client_objects[i].token);
       if (_token === token) {
         _socket.emit('media', data);
         console.log(_socket.id + " | emitting to gateway " + data.cmd);
@@ -245,29 +222,6 @@ io.on('connection', function (socket) {
     }
   });
 
-  socket.on('link_garage_opener', function (data) {
-    var token = data.token;
-    var mac = data.mac;
-    client_objects.push( { token:token, socket:socket, mac:mac } );
-    console.log("linked garage token with socket | " + token);
-  });
-    
-  socket.on('garage_opener', function (data) {
-    var token = data.token;
-    var _command = data.command;
-    for (var i=0; i < device_objects.length; i++) {
-      var _socket = device_objects[i].socket;
-      var _token = device_objects[i].token;
-      var _mac = device_objects[i].mac;
-      console.log("[database:device_object] " + token + ":" + _token);
-      if (_token === token) {
-        try { _socket.send('command' + _command) }            
-        catch (e) { console.log("reply error | " + e) };        
-        console.log(_mac + " | GARAGE_OPENER: " + _command);
-      }
-    }
-  });  
-
   socket.on('set_mobile', function (data) {
     console.log(data);
     try { data = JSON.parse(data) }
@@ -282,20 +236,23 @@ io.on('connection', function (socket) {
   socket.on('link_mobile', function (data) {
     try { data = JSON.parse(data) }
     catch (e) { console.log("invalid json") }
+    console.log(data);
     var token = data.token;
     var mac = data.mac; 
-    //console.log(mac + " link_mobile | " + token);
-    client_objects.push( { token:token, socket:socket, mac:mac } );
+    console.log(mac + " link_mobile | " + token);
+    client_objects.push( { token:token, socket:socket } );
   });
 
   socket.on('to_mobile', function (data) {
+    /*try { data = JSON.parse(data) }
+    catch (e) { console.log("invalid json") }*/
     var token = data.token;
     for (var i=0; i < client_objects.length; i++) {
       _token = client_objects[i].token;
       if (_token && _token === token) {
         _socket = client_objects[i].socket;
         _mac = client_objects[i].mac;
-        console.log(_mac + " | to_mobile " + data.command);
+        console.log(token + " | sending ------------> " + data.command);
         _socket.emit('to_mobile', data);
       }
     }
@@ -305,14 +262,13 @@ io.on('connection', function (socket) {
     try { data = JSON.parse(data) }
     catch (e) { console.log("invalid json") }    
     var token = data.token;
-    console.log(data);
     for (var i=0; i < client_objects.length; i++) {
       _token = client_objects[i].token;
       if (_token && _token === token) {
         _socket = client_objects[i].socket;
         _mac = client_objects[i].mac;
-        _socket.emit('from_mobile', data);
-        console.log(data.mac + " | from_mobile " + JSON.stringify(data));
+        console.log(token + " | relaying gps data ");        
+        _socket.emit('from_mobile', data);  
       }
     }
   });
@@ -326,7 +282,7 @@ io.on('connection', function (socket) {
       if (_token === token) {
         client_objects.push({ mac:_mac, token:token, socket:socket });
         i = client_objects.length; //to exist loop, should work without this?
-        //console.log(_mac + " | camera added to client_objects with " + _token);
+        console.log(_mac + " | camera added to client_objects with " + _token);
       }
     }
   });
@@ -425,16 +381,14 @@ io.on('connection', function (socket) {
     }
   });
   
-  socket.on('get_token', function (data) {console.log("hit get_token");
-    var public_ip = socket.request.connection.remoteAddress;
-    public_ip = public_ip.slice(7);
+  socket.on('get_token', function (data) {
     var mac = data.mac;
     var local_ip = data.local_ip;
     var port = data.port;
     var device_type = data.device_type;
     var device_name = data.device_name;
-    console.log(mac + " | " + device_name + " " + local_ip + " " + public_ip +  ":"+ port);
-    var post_data = { mac:mac, local_ip:local_ip, public_ip:public_ip, port:port, device_type:device_type, device_name:device_name };  
+    console.log(mac + " | " + device_name + " " + local_ip + " " + port);
+    var post_data = { mac:mac, local_ip:local_ip, port:port, device_type:device_type, device_name:device_name };  
     var response = request.post('http://pyfi.org/php/add_device.php', {form: post_data},
     function (error, response, data) { 
       console.log("data from add_device.php | " + data);
@@ -460,42 +414,6 @@ io.on('connection', function (socket) {
     });
   });   
     
-  socket.on('get_gateway_devices', function (data) {
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      var _mac = client_objects[i].mac; 
-      if (_token && _token === data.token) {
-        _socket.emit('get_gateway_devices', data);
-        console.log(_mac + " | get_gateway_devices " + data);
-      }
-    }
-  });
-
-  socket.on('cmd_gateway_device', function (data) {
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      var _mac = client_objects[i].mac; 
-      if (_token && _token === data.token) {
-        _socket.emit('cmd_gateway_device', data);
-        console.log(_mac + " | cmd_gateway_device " + data);
-      }
-    }
-  });
-
-  socket.on('set_gateway_devices', function (data) {
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      var _mac = client_objects[i].mac; 
-      if (_token && _token === data.token) {
-        _socket.emit('set_gateway_devices', data);
-        console.log(_mac + " | set_gateway_devices ");
-      }
-    }
-  });
-
   socket.on('gateway', function (data) {
     var token = data.token;
     var array_size = client_objects.length;
@@ -503,7 +421,7 @@ io.on('connection', function (socket) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
       var _mac = client_objects[i].mac; 
-      if (_token && _token === token) {
+      if (_token === token) {
         //_socket.emit('gateway', data);
         //i = client_objects.length; //to exist loop, should work without this?
         _socket.emit('gateway', data);
@@ -513,20 +431,10 @@ io.on('connection', function (socket) {
   });
   
   socket.on('png_test', function (data) {
-    try { data = JSON.parse(data) }
-    catch (e) { console.log("invalid json") }
-    console.log(data.mac + " | received ping, sending reply");
-    socket.emit('png_test',{command:"ping!"});
-/*    timeout();
-function timeout() {
-    setTimeout(function () {
-        console.log(socket.id + ' | ping!');
-        socket.emit('png_test',{ping:"ping!"});
-        timeout();
-    }, 10000);
-}*/
+    console.log("received ping, sending reply");
+    socket.emit('png_test');
   });
-
+  
   socket.on('disconnect', function() {
     for(var i = 0, index = -1; i < client_objects.length; i++) {
       if (client_objects[i].socket === socket) {
