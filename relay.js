@@ -71,7 +71,7 @@ wss.on('connection', function connection(ws) {
     catch (e) { console.log("invalid json") };
 
     var token = msg.token;
-    var magnitude = msg.magnitude;
+    var device_type = msg.device_type;
     var mac = msg.mac;
     
     // --------------  respond to ping requests  ----------------- //    
@@ -111,31 +111,62 @@ wss.on('connection', function connection(ws) {
       }
     }
     
-    // --------------  relay device command to linked sockets  ----------------- //
-    //if (msg.device_type === "garage_opener") {
+    // ----------------  garage opener  ------------------- //
+    if (msg.device_type === "garage_opener") {
       var token = msg.token;
       for (var i=0; i < client_objects.length; i++) {
         _token = client_objects[i].token;
+        //console.log("garage_opener | " + token+":"+_token);
         if (_token && _token === token) {
           _socket = client_objects[i].socket;
           _mac = client_objects[i].mac;
           _socket.emit('garage_opener', msg );  
-          console.log(mac + " | sending message to client " + _mac);
+          console.log(mac + " | sending message to client ");
         }
       }
-    //}        
-    if (msg.png_test) {
-      console.log("received ping, sending reply");
     }
-    // --------------  relay device command to linked sockets  ----------------- //
-    if (magnitude > 1000) {
+
+    // ---------------  media controller  ----------------- //
+    if (msg.device_type === "media_controller") {
+      var token = msg.token;
+      for (var i=0; i < client_objects.length; i++) {
+        _token = client_objects[i].token;
+        //console.log("garage_opener | " + token+":"+_token);
+        if (_token && _token === token) {
+          _socket = client_objects[i].socket;
+          _mac = client_objects[i].mac;
+          _socket.emit('media_controller', msg );  
+          console.log("media_controller",msg);
+        }
+      }
+    }
+
+    // --------------  room sensor  ----------------- //
+    if (msg.device_type === "room_sensor") {
+      var token = msg.token;
+      for (var i=0; i < client_objects.length; i++) {
+        _token = client_objects[i].token;
+        //console.log("garage_opener | " + token+":"+_token);
+        if (_token && _token === token) {
+          _socket = client_objects[i].socket;
+          _mac = client_objects[i].mac;
+          _socket.emit('room_sensor', msg );  
+          console.log("room_sensor",msg);
+        }
+      }
+    }
+
+    /*
+    if (msg.magnitude > 1000) {
       var post_data = { token:token, mac:mac, magnitude:magnitude };  
       var response = request.post('http://pyfi.org/php/get_assoc_macs.php', {form: post_data},
       function (error, response, data) {
         try { data = JSON.parse(data) }
         catch (e) { console.log("invalid json") };
         console.log('get_assoc_macs.php | ');
-        for (var i=0; i < data.length; i++) {
+	length = -1;
+	if (data) length = data.length;
+        for (var i=0; i < length; i++) {
           token = data[i].token;
           for (var j=0; j < client_objects.length; j++) {
             _token = client_objects[j].token;
@@ -150,7 +181,7 @@ wss.on('connection', function connection(ws) {
       });
     }
 
-    if (magnitude > 50000) {
+      if (magnitude > 50000) {
       var post_data = { token:token, mac:mac, magnitude:magnitude };  
       var response = request.post('http://pyfi.org/php/gmail.php', {form: post_data},
       function (error, response, data) { 
@@ -158,7 +189,6 @@ wss.on('connection', function connection(ws) {
         console.log('set lights to alert');
         //_socket.emit('light_theme', { theme:'alert' });
       });
-      
       var post_data = { token:token, mac:mac, magnitude:magnitude };  
       var response = request.post('http://pyfi.org/php/get_assoc_macs.php', {form: post_data},
       function (error, response, data) {
@@ -175,25 +205,13 @@ wss.on('connection', function connection(ws) {
               console.log(mac + " | set light theme to 'alert' " + magnitude);
             }
           }
-        }    
+        }
       });      
-    }
-      
-    /*for (var i=0; i < client_objects.length; i++) {          
-      _token = client_objects[i].token;      
-      if (_token && _token === token) {
-        _socket = client_objects[i].socket;
-        _mac = client_objects[i].mac;
-        _socket.emit('window_sensor', { token:token, mac:mac, magnitude:magnitude });      
-        console.log(mac + " | relaying data to client " + magnitude);
-      }
     }*/
-    /*try { ws.send('ok') }
-    catch (e) { console.log("reply error: " + e) };*/
+
   });
 
   ws.on('close', function close() {
-  
     for (var i=0; i < device_objects.length; i++) {
       _socket = device_objects[i].socket;
       _mac = device_objects[i].mac;
@@ -201,9 +219,7 @@ wss.on('connection', function connection(ws) {
         device_objects.slice(i);
         console.log(_mac + " | disconnected");
       }
-    } 
-      
-    console.log('disconnected');
+    }
   });
   
   ws.on('error', function() {
@@ -245,7 +261,7 @@ io.on('connection', function (socket) {
     }
   });
 
-  socket.on('link_garage_opener', function (data) {
+  socket.on('link_device', function (data) {
     var token = data.token;
     var mac = data.mac;
     client_objects.push( { token:token, socket:socket, mac:mac } );
@@ -253,26 +269,35 @@ io.on('connection', function (socket) {
   });
     
   socket.on('garage_opener', function (data) {
-    var token = data.token;
-    var _command = data.command;
     for (var i=0; i < device_objects.length; i++) {
       var _socket = device_objects[i].socket;
       var _token = device_objects[i].token;
-      var _mac = device_objects[i].mac;
-      console.log("[database:device_object] " + token + ":" + _token);
-      if (_token === token) {
-        try { _socket.send('command' + _command) }            
-        catch (e) { console.log("reply error | " + e) };        
-        console.log(_mac + " | GARAGE_OPENER: " + _command);
+      if (_token === data.token) {
+        try { _socket.send('command' + data.command) }            
+        catch (e) { console.log(e) };        
+        console.log("garage_opener",data);
       }
     }
-  });  
+  });
+
+  socket.on('siren', function (data) {
+    for (var i=0; i < device_objects.length; i++) {
+      var _socket = device_objects[i].socket;
+      var _token = device_objects[i].token;
+      if (_token === data.token) {
+        try { _socket.send('command' + data.command) }            
+        catch (e) { console.log(e) };        
+        console.log("siren",data);
+      }
+    }
+  });
 
   socket.on('set_mobile', function (data) {
-    console.log(data);
     try { data = JSON.parse(data) }
     catch (e) { console.log("invalid json") }
-    var response = request.post('http://pyfi.org/php/set_mobile.php', {form: data},
+    var server = data.server;
+    console.log(data.server);
+    var response = request.post(data.server, {form: data},
     function (error, response, data) {
         socket.emit('token',data);
         console.log("set_mobile.php | " + data);   
@@ -337,15 +362,54 @@ io.on('connection', function (socket) {
     client_objects.push( { token:token, socket:socket } );
   });
 
-  socket.on('link_lights', function (data) {
+  socket.on('add_zwave_device', function (data) {
     var token = data.token;
-    console.log("link_lights | " + token);
+    console.log("add_zwave_device | " + token);
+    for (var i=0; i < client_objects.length; i++) {
+      var _socket = client_objects[i].socket;
+      var _token = client_objects[i].token;
+      if (token && _token === token) {
+        _socket.emit('add_zwave_device', data);
+      }
+    }
+  });
+
+  socket.on('link lights', function (data) {
+    var token = data.token;
     for (var i=0; i < client_objects.length; i++) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
       var _mac = client_objects[i].mac; 
       if (_token === token) {
-        _socket.emit('link_lights', data);
+        _socket.emit('link lights', data);
+        console.log("link lights",data);
+      }
+    }
+  });
+
+  socket.on('store_schedule', function (data) {
+    var token = data.token;
+    console.log("store_schedule | " + token);
+    for (var i=0; i < client_objects.length; i++) {
+      var _socket = client_objects[i].socket;
+      var _token = client_objects[i].token;
+      if (token && _token === token) {
+    console.log("EMITTING store_schedule | " + data.token);
+        _socket.emit('store_schedule', data);
+      }
+    }
+  });
+
+
+  socket.on('add thermostat', function (data) {
+    var token = data.token;
+    console.log("add thermostat | " + token);
+    for (var i=0; i < client_objects.length; i++) {
+      var _socket = client_objects[i].socket;
+      var _token = client_objects[i].token;
+      if (token && _token === token) {
+        console.log("add thermostat | " + token);      
+        _socket.emit('add thermostat', data);
       }
     }
   });
@@ -375,14 +439,14 @@ io.on('connection', function (socket) {
     }
   });
 
-  socket.on('get_thermostat', function (data) {
+  socket.on('get thermostat', function (data) {
     var token = data.token;
-    console.log("get_thermostat | " + token);
+    console.log("get thermostat | " + token);
     for (var i=0; i < client_objects.length; i++) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
       if (token && _token === token) {
-        _socket.emit('get_thermostat', data);
+        _socket.emit('get thermostat', data);
       }
     }
   });
@@ -425,7 +489,7 @@ io.on('connection', function (socket) {
     }
   });
   
-  socket.on('get_token', function (data) {console.log("hit get_token");
+  socket.on('get_token', function (data) {console.log("<< ------------------ hit get_token");
     var public_ip = socket.request.connection.remoteAddress;
     public_ip = public_ip.slice(7);
     var mac = data.mac;
@@ -437,7 +501,7 @@ io.on('connection', function (socket) {
     var post_data = { mac:mac, local_ip:local_ip, public_ip:public_ip, port:port, device_type:device_type, device_name:device_name };  
     var response = request.post('http://pyfi.org/php/add_device.php', {form: post_data},
     function (error, response, data) { 
-      console.log("data from add_device.php | " + data);
+      //console.log(mac + " | add_device.php");
       if (!error && response.statusCode == 200) {
         if (/^[\],:{}\s]*$/.test(data.replace(/\\["\\\/bfnrtu]/g, '@').
           replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']').
@@ -454,23 +518,11 @@ io.on('connection', function (socket) {
         if (index != -1) {
           client_object = { socket:socket, mac:mac, token:data.token };
           client_objects[index] = client_object;
-          console.log(mac + ' | device added to client_objects ' + data.token);      
+          console.log(mac + ' | device added to client_objects ');      
         }
       }
     });
   });   
-    
-  socket.on('get_gateway_devices', function (data) {
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      var _mac = client_objects[i].mac; 
-      if (_token && _token === data.token) {
-        _socket.emit('get_gateway_devices', data);
-        console.log(_mac + " | get_gateway_devices " + data);
-      }
-    }
-  });
 
   socket.on('cmd_gateway_device', function (data) {
     for (var i=0; i < client_objects.length; i++) {
@@ -483,15 +535,59 @@ io.on('connection', function (socket) {
       }
     }
   });
-
-  socket.on('set_gateway_devices', function (data) {
+    
+  socket.on('get devices', function (data) {
     for (var i=0; i < client_objects.length; i++) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
       var _mac = client_objects[i].mac; 
       if (_token && _token === data.token) {
-        _socket.emit('set_gateway_devices', data);
-        console.log(_mac + " | set_gateway_devices ");
+        _socket.emit('get devices', data);
+        console.log(data.mac + " | get devices ");
+      }
+    }
+  });
+
+  socket.on('load devices', function (data) {
+    for (var i=0; i < client_objects.length; i++) {
+      var _socket = client_objects[i].socket;
+      var _token = client_objects[i].token;
+      if (_token && _token === data.token) {
+        _socket.emit('load devices',data);
+        console.log(data.mac + " | load devices",data);
+      }
+    }
+  });
+
+  socket.on('load settings', function (data) {
+    for (var i=0; i < client_objects.length; i++) {
+      var _socket = client_objects[i].socket;
+      var _token = client_objects[i].token;
+      if (_token && _token === data.token) {
+        _socket.emit('load settings', data);
+        //console.log(data.mac + " | load_settings",data);
+      }
+    }
+  });
+
+  socket.on('set settings', function (data) {
+    for (var i=0; i < client_objects.length; i++) {
+      var _socket = client_objects[i].socket;
+      var _token = client_objects[i].token;
+      if (_token && _token === data.token) {
+        _socket.emit('set settings', data);
+        console.log(data.mac + " | set settings " + data);
+      }
+    }
+  });
+
+  socket.on('get settings', function (data) {
+    for (var i=0; i < client_objects.length; i++) {
+      var _socket = client_objects[i].socket;
+      var _token = client_objects[i].token;
+      if (_token && _token === data.token) {
+        _socket.emit('get settings', data);
+        console.log(data.mac + " | get settings");
       }
     }
   });
