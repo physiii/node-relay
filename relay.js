@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 var request = require('request');
 var WebSocketServer = require("ws").Server;
 var express = require('express');
@@ -21,10 +22,11 @@ var allowCrossDomain = function(req, res, next) {
     }
 };
 
-var client_object = {};
+//var client_object = {};
 var client_objects = [];
-var device_object = {};
+//var device_object = {};
 var device_objects = [];
+var groups = [];
 
 app.use(allowCrossDomain);
 app.use(express.static(__dirname + '/'));
@@ -34,22 +36,146 @@ app.get('/', function (req, res) {
 server.listen(port);
 console.log('clients on port ' + port);
 
-// --------------  reply to token request  ----------------- //
-/*app.post('/tokens', function(req, res) {
-  console.log('hit post request');
-  var mac = req.body.mac;
-  var device_name = req.body.device_name;
-  var _token = "";
-  
-  for (var i=0; i < client_objects.length; i++) {
-    _mac = client_objects[i].mac;
-    if (_mac === mac) {
-      _token = client_objects[i].token;
-    }
-  }
 
-  res.send("{\"token\":\""+_token+"\"}");
-});*/
+// -------------------------------  MangoDB  --------------------------------- //
+var mongodb = require('mongodb');
+var ObjectId = require('mongodb').ObjectID;
+var MongoClient = mongodb.MongoClient;
+get_groups();
+get_device_objects();
+get_client_objects();
+
+//-- get things --//
+function get_groups() {
+MongoClient.connect('mongodb://127.0.0.1:27017/groups', function (err, db) {
+  if (err) {
+    console.log('Unable to connect to the mongoDB server. Error:', err);
+  } else {
+    var collection = db.collection('groups');
+    collection.find().toArray(function (err, result) {
+      if (err) {
+        console.log(err);
+      } else if (result.length) {
+        groups = result;
+	console.log("get_groups");
+      } else {
+        console.log('No document(s) found with defined "find" criteria!');
+      }
+      db.close();
+    });
+  }
+});
+}
+
+function get_device_objects() {
+  MongoClient.connect('mongodb://127.0.0.1:27017/devices', function (err, db) {
+    if (err) {
+      console.log('Unable to connect to the mongoDB server. Error:', err);
+    } else {
+      var collection = db.collection('devices');
+      collection.find().toArray(function (err, result) {
+        if (err) { 
+	  console.log(err);
+        } else if (result.length) {
+	  device_objects = result;
+  	  //console.log('get_device_objects',device_objects);	
+        } else {
+	  console.log('No document(s) found with defined "find" criteria!');
+        }
+        db.close();
+      });
+    }
+  });
+}
+
+function get_client_objects() {
+  MongoClient.connect('mongodb://127.0.0.1:27017/clients', function (err, db) {
+    if (err) {
+      console.log('Unable to connect to the mongoDB server. Error:', err);
+    } else {
+      var collection = db.collection('clients');
+      collection.find().toArray(function (err, result) {
+        if (err) { 
+	  console.log(err);
+        } else if (result.length) {
+	  client_objects = result;
+  	  //console.log('get_client_objects',client_objects);	
+        } else {
+	  console.log('No document(s) found with defined "find" criteria!');
+        }
+        db.close();
+      });
+    }
+  });
+}
+
+//-- store things --//
+function store_group(group) {
+  /* store group associations */
+  MongoClient.connect('mongodb://127.0.0.1:27017/groups', function (err, db) {
+    if (err) {
+      console.log('Unable to connect to the mongoDB server. Error:', err);
+    } else {
+      var collection = db.collection('groups');
+      console.log('store_group_state');
+
+      collection.update({group_id:group.group_id}, {$set:group},{upsert:true}, function(err, item){
+	if (err) {
+          console.log(err);
+        }
+	//console.log('item',item);
+      });
+      db.close();
+      get_groups();
+    }
+  });
+  //console.log("store_group",groups);
+}
+
+function store_device_object(device_object) {
+  var temp_object = Object.assign({}, device_object);
+  delete temp_object.socket;
+  MongoClient.connect('mongodb://127.0.0.1:27017/devices', function (err, db) {
+    if (err) {
+      console.log('Unable to connect to the mongoDB server. Error:', err);
+    } else {
+      var collection = db.collection('devices');
+      console.log('store_device_object');
+
+      collection.update({token:temp_object.token}, {$set:temp_object},{upsert:true}, function(err, item){
+	if (err) {
+          console.log(err);
+        }
+	//console.log('item',item);
+      });
+      db.close();
+      //get_device_objects();
+    }
+  });
+  //console.log("store_group",groups);
+}
+
+function store_client_object(client_object) {
+  var temp_object = Object.assign({}, client_object);
+  delete temp_object.socket;
+  MongoClient.connect('mongodb://127.0.0.1:27017/clients', function (err, db) {
+    if (err) {
+      console.log('Unable to connect to the mongoDB server. Error:', err);
+    } else {
+      var collection = db.collection('clients');
+      console.log('store_client_object',temp_object);
+      
+      collection.update({token:temp_object.token}, {$set:temp_object},{upsert:true}, function(err, item){
+	if (err) {
+          console.log(err);
+        }
+	//console.log('item',item);
+      });
+      db.close();
+      //get_client_objects();
+    }
+  });
+}
 
 // --------------  websocket server for devices  ----------------- //
 var ws_port = 4000;
@@ -59,9 +185,6 @@ console.log('devices on port %d', ws_port);
 
 wss.on('connection', function connection(ws) {
 
-  device_object = { mac:"init", token:"init", socket:ws };
-  device_objects.push(device_object);
-
   try { ws.send('Hello from relay server!') }
   catch (e) { console.log("error: " + e) };
   
@@ -69,51 +192,56 @@ wss.on('connection', function connection(ws) {
     var msg = {};
     try { msg = JSON.parse(message) }
     catch (e) { console.log("invalid json") };
-
     var token = msg.token;
-    var device_type = msg.device_type;
     var mac = msg.mac;
-    
+    var cmd = msg.cmd;
+    var device_type = msg.device_type;
+    var public_ip = ws.upgradeReq.connection.remoteAddress;
+    public_ip = public_ip;
+    var local_ip = msg.local_ip;
+
     // --------------  respond to ping requests  ----------------- //    
-    if (msg.cmd == "png_test") {
+    if (cmd == "png_test") {
       command = "png_test";
       try { ws.send('command' + command) }
       catch (e) { console.log("reply error | " + e) };        
-      console.log(mac + " | received ping, sending reply ");
+      //console.log(mac + " | received ping, sending reply ");
     }
 
     // --------------  respond to token requests  ----------------- //    
-    if (msg.cmd == "tok_req") {
-      console.log("getting token for " + mac);
-      var post_data = msg;  
-      var response = request.post(
-        'http://pyfi.org/php/add_device.php',
-        {form: post_data},
-        function (error, response, data) {
-          if (!error && response.statusCode == 200) {
-            console.log('make_token.php | ' + data);
-            try { data = JSON.parse(data) }
-            catch (e) { console.log("invalid json") };
-            try { ws.send('token' + data.token) }            
-            catch (e) { console.log("reply error | " + e) };
-          }
-      });
-    }
-    
-    for (var i=0; i < device_objects.length; i++) {
-      _socket = device_objects[i].socket;
-      _token = device_objects[i].token;
-      _mac = device_objects[i].mac;
-      if ( token && _socket === ws && _token === "init") {
-        device_objects[i]['token'] = token;
-        device_objects[i]['mac'] = mac;
-        console.log("linked token and mac with socket");
+    if (cmd == "tok_req") {
+      var token = crypto.createHash('sha512').update(mac).digest('hex');
+      try { ws.send('token' + token) }            
+      catch (e) { console.log("reply error | " + e) };
+
+      var index = find_index(device_objects,'token',token);
+      if (index < 0) {
+        var device_object = { token:token, mac:mac, local_ip:local_ip, public_ip:public_ip, device_type:device_type, groups:[], socket:ws };
+        store_device_object(device_object);
+        device_objects.push(device_object);
+        console.log('added device',device_object.mac);
+      } else {
+        device_objects[index].public_ip = public_ip;
+        device_objects[index].local_ip = local_ip;
+        device_objects[index].device_type = device_type;
+        store_device_object(device_objects[index]);
+        device_objects[index].socket = ws;
+
+        var index = find_index(device_objects,'token',token);
+        console.log('updated device',device_object);
+      }
+     
+      var index = find_index(groups,'group_id',token);
+      if (index < 0) {
+        var group = {group_id:token, mode:'init', device_type:['alarm'], members:[]};
+        groups.push(group);
+        store_group(group);
       }
     }
+
     
     // ----------------  garage opener  ------------------- //
-    if (msg.device_type === "garage_opener") {
-      var token = msg.token;
+    if (device_type === "garage_opener") {
       for (var i=0; i < client_objects.length; i++) {
         _token = client_objects[i].token;
         //console.log("garage_opener | " + token+":"+_token);
@@ -127,11 +255,9 @@ wss.on('connection', function connection(ws) {
     }
 
     // ---------------  media controller  ----------------- //
-    if (msg.device_type === "media_controller") {
-      var token = msg.token;
+    if (device_type === "media_controller") {
       for (var i=0; i < client_objects.length; i++) {
         _token = client_objects[i].token;
-        //console.log("garage_opener | " + token+":"+_token);
         if (_token && _token === token) {
           _socket = client_objects[i].socket;
           _mac = client_objects[i].mac;
@@ -142,72 +268,37 @@ wss.on('connection', function connection(ws) {
     }
 
     // --------------  room sensor  ----------------- //
-    if (msg.device_type === "room_sensor") {
-      var token = msg.token;
-      for (var i=0; i < client_objects.length; i++) {
-        _token = client_objects[i].token;
-        //console.log("garage_opener | " + token+":"+_token);
-        if (_token && _token === token) {
-          _socket = client_objects[i].socket;
-          _mac = client_objects[i].mac;
-          _socket.emit('room_sensor', msg );  
+    for (var i = 0; i < device_type.length; i++) {
+      if (device_type[i] === "room_sensor") {
+        if (msg.magnitude > 300) {
+          var index = find_index(device_objects,'token',token);
+          //loop through groups for device
+          if (index < 0) return;
+          for (var j = 0; j < device_objects[index].groups.length; j++) {
+            //find group members
+            var index2 = find_index(groups,'group_id',device_objects[index].groups[j]);
+            //console.log("device_object",device_objects[index]);
+            if (index2 < 0) return;
+            msg.mode = groups[index2].mode;
+            if (groups[index2].mode == 'armed') {
+              msg.status = 'alert';
+            }
+            if (groups[index2].mode == 'disarmed') {
+              msg.status = 'presence';
+            }    
+            for (var k=0; k < groups[index2].members.length; k++) {
+              /*for (var k=0; k < client_objects.length; k++) {
+                  if (groups[index2].members[j] == client_objects[k].token) {
+                  console.log("messaging group member",msg.status);
+                  client_objects[k].socket.emit('room_sensor', msg );
+                }
+              }*/
+            }
+          }
           console.log("room_sensor",msg);
         }
       }
     }
-
-    /*
-    if (msg.magnitude > 1000) {
-      var post_data = { token:token, mac:mac, magnitude:magnitude };  
-      var response = request.post('http://pyfi.org/php/get_assoc_macs.php', {form: post_data},
-      function (error, response, data) {
-        try { data = JSON.parse(data) }
-        catch (e) { console.log("invalid json") };
-        console.log('get_assoc_macs.php | ');
-	length = -1;
-	if (data) length = data.length;
-        for (var i=0; i < length; i++) {
-          token = data[i].token;
-          for (var j=0; j < client_objects.length; j++) {
-            _token = client_objects[j].token;
-            if (_token && _token === token) {
-              _socket = client_objects[j].socket;
-              _mac = client_objects[j].mac;
-              _socket.emit('light_theme', { theme:'presence' });  
-              console.log(mac + " | set light theme to 'presence' " + magnitude);
-            }
-          }
-        }
-      });
-    }
-
-      if (magnitude > 50000) {
-      var post_data = { token:token, mac:mac, magnitude:magnitude };  
-      var response = request.post('http://pyfi.org/php/gmail.php', {form: post_data},
-      function (error, response, data) { 
-        console.log('gmail.php | ' + data);
-        console.log('set lights to alert');
-        //_socket.emit('light_theme', { theme:'alert' });
-      });
-      var post_data = { token:token, mac:mac, magnitude:magnitude };  
-      var response = request.post('http://pyfi.org/php/get_assoc_macs.php', {form: post_data},
-      function (error, response, data) {
-        data = JSON.parse(data);
-        console.log('get_assoc_macs.php | ');
-        for (var i=0; i < data.length; i++) {
-          token = data[i].token;
-          for (var j=0; j < client_objects.length; j++) {
-            _token = client_objects[j].token;
-            if (_token && _token === token) {
-              _socket = client_objects[j].socket;
-              _mac = client_objects[j].mac;
-              _socket.emit('light_theme', { theme:'alert' });  
-              console.log(mac + " | set light theme to 'alert' " + magnitude);
-            }
-          }
-        }
-      });      
-    }*/
 
   });
 
@@ -227,52 +318,129 @@ wss.on('connection', function connection(ws) {
   });
 });
 
+
+function find_index(array, key, value) {
+  for (var i=0; i < array.length; i++) {
+    if (array[i][key] == value) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 // -------------  socket.io server  ---------------- //
 io.on('connection', function (socket) {
   console.info(socket.id + " | client connected" );
-  client_objects.push(socket);
+
+  socket.on('get token', function (data) {
+    var public_ip = socket.request.connection.remoteAddress;
+    public_ip = public_ip.slice(7);
+    var device_name = data.device_name;
+    var token = crypto.createHash('sha512').update(data.mac).digest('hex');
+    var temp_object = Object.assign({}, data);
+    temp_object.token = token;
+    temp_object.public_ip = public_ip;
+    socket.emit('get token',temp_object);
+    store_client_object(temp_object);
+    temp_object.socket = socket;
+    var index = find_index(client_objects,'token',token);
+    if (index < 0) {
+      client_objects.push(temp_object);
+      store_client_object(temp_object);
+      console.log('added client',temp_object.mac);
+    } else {
+      client_objects[index] = temp_object;
+      console.log('updated client',temp_object.mac);
+    }
+    
+    var index = find_index(groups,'group_id',token);
+    if (index < 0) {
+      var group = {group_id:token, mode:'init', device_type:['alarm'], members:[]};
+      groups.push(group);
+      store_group(group);
+    }
+  });   
+
+
+
+
+
 
   socket.on('media', function (data) {
     var token = data.token;
     for (var i=0; i < client_objects.length; i++) {
       _socket = client_objects[i].socket;
       _token = client_objects[i].token;
-
-      //console.log("incoming token " + token + " | client_objects " + client_objects[i].token);
       if (_token === token) {
         _socket.emit('media', data);
-        console.log(_socket.id + " | emitting to gateway " + data.cmd);
-      }
-    }
-  });
-   
-  socket.on('window_sensor', function (data) {
-    var token = data.token;    
-    for (var i=0; i < device_objects.length; i++) {
-      var _socket = device_objects[i].socket;
-      var _token = device_objects[i].token;
-      var _mac = device_objects[i].mac; 
-      console.log("window_sensor client token | " + token);
-      console.log("window_sensor device token | "  + _token);
-      if (_token === token) {
-        client_objects.push({ mac:_mac, token:token, socket:socket });
-        console.log(_mac + " | window_sensor added to client_objects | " + _token);
+        console.log("media",data);
       }
     }
   });
 
-  socket.on('link_device', function (data) {
-    var token = data.token;
-    var mac = data.mac;
-    client_objects.push( { token:token, socket:socket, mac:mac } );
-    console.log("linked garage token with socket | " + token);
+  socket.on('set alarm', function (data) {
+    store_group(data);
+    socket.emit('alarm',data);
+    console.log("set alarm", data);
   });
-    
+
+  socket.on('link device', function (data) {
+    console.log("link device",data);
+    var device_token = crypto.createHash('sha512').update(data.mac).digest('hex');
+    var user_token = data.user_token;
+    var device_name = data.device_name;
+    for (var i=0; i < device_objects.length; i++) {
+      if (device_objects[i].token == device_token) {
+        device_objects[i].groups.push(user_token);
+        device_objects[i].device_name = device_name;
+        console.log('link device',device_objects[i]);
+      }
+    }
+    for (var i=0; i < client_objects.length; i++) {
+      if (client_objects[i].token == device_token) {
+        client_objects[i].groups.push(user_token);
+        client_objects[i].device_name = device_name;
+        store_client_object(client_objects[i]);
+        console.log('link device',client_objects[i]);
+      }
+    }
+    for (var i=0; i < groups.length; i++) {
+      // -- add device token as user member -- //
+      if (groups[i].group_id == user_token) {
+        groups[i].members.push(device_token);
+        store_group(groups[i]);
+      }
+      // -- add user token as device member -- //
+      if (groups[i].group_id == device_token) {
+        groups[i].members.push(user_token);
+        store_group(groups[i]);
+      }
+    }
+    data.token = user_token;
+    get_devices(data,socket);
+  });
+
+  socket.on('unlink device', function (data) {
+    var device_token = crypto.createHash('sha512').update(data.mac).digest('hex');
+    var user_token = data.user_token;
+
+    var index = find_index(groups,'group_id',user_token);
+    var index2 = groups[index].members.indexOf(device_token);
+    groups[index].members.splice(index2,1);
+    store_group(groups[index]);
+
+    var index = find_index(client_objects,'token',device_token);
+    var index2 = client_objects[index].groups.indexOf(user_token);
+    client_objects[index].groups.splice(index,1);
+    store_client_object(client_objects[index]);
+    console.log('unlink device',groups[index]);
+  });
+
   socket.on('garage_opener', function (data) {
     for (var i=0; i < device_objects.length; i++) {
       var _socket = device_objects[i].socket;
       var _token = device_objects[i].token;
-      if (_token === data.token) {
+      if (_token == data.token) {
         try { _socket.send('command' + data.command) }            
         catch (e) { console.log(e) };        
         console.log("garage_opener",data);
@@ -284,7 +452,7 @@ io.on('connection', function (socket) {
     for (var i=0; i < device_objects.length; i++) {
       var _socket = device_objects[i].socket;
       var _token = device_objects[i].token;
-      if (_token === data.token) {
+      if (_token == data.token) {
         try { _socket.send('command' + data.command) }            
         catch (e) { console.log(e) };        
         console.log("siren",data);
@@ -303,24 +471,15 @@ io.on('connection', function (socket) {
         console.log("set_mobile.php | " + data);   
     });
   });
-  
-  socket.on('link_mobile', function (data) {
-    try { data = JSON.parse(data) }
-    catch (e) { console.log("invalid json") }
-    var token = data.token;
-    var mac = data.mac; 
-    //console.log(mac + " link_mobile | " + token);
-    client_objects.push( { token:token, socket:socket, mac:mac } );
-  });
 
-  socket.on('to_mobile', function (data) {
+  socket.on('to mobile', function (data) {
     var token = data.token;
     for (var i=0; i < client_objects.length; i++) {
       _token = client_objects[i].token;
       if (_token && _token === token) {
         _socket = client_objects[i].socket;
         _mac = client_objects[i].mac;
-        console.log(_mac + " | to_mobile " + data.command);
+        //console.log(_mac + " | to_mobile " + data.command);
         _socket.emit('to_mobile', data);
       }
     }
@@ -330,36 +489,15 @@ io.on('connection', function (socket) {
     try { data = JSON.parse(data) }
     catch (e) { console.log("invalid json") }    
     var token = data.token;
-    console.log(data);
     for (var i=0; i < client_objects.length; i++) {
       _token = client_objects[i].token;
       if (_token && _token === token) {
         _socket = client_objects[i].socket;
         _mac = client_objects[i].mac;
         _socket.emit('from_mobile', data);
-        console.log(data.mac + " | from_mobile " + JSON.stringify(data));
+        //console.log(data.mac + " | from_mobile " + JSON.stringify(data));
       }
     }
-  });
-    
-  socket.on('link_camera', function (data) {
-    var token = data.token;
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      var _mac = client_objects[i].mac; 
-      if (_token === token) {
-        client_objects.push({ mac:_mac, token:token, socket:socket });
-        i = client_objects.length; //to exist loop, should work without this?
-        //console.log(_mac + " | camera added to client_objects with " + _token);
-      }
-    }
-  });
-    
-  socket.on('link_gateway', function (data) {
-    var token = data.token;
-    console.log("added to client_objects | " + token);
-    client_objects.push( { token:token, socket:socket } );
   });
 
   socket.on('add_zwave_device', function (data) {
@@ -368,7 +506,7 @@ io.on('connection', function (socket) {
     for (var i=0; i < client_objects.length; i++) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
-      if (token && _token === token) {
+      if (token && _token == token) {
         _socket.emit('add_zwave_device', data);
       }
     }
@@ -483,89 +621,87 @@ io.on('connection', function (socket) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
       if (token && _token === token) {
-        _socket.emit('device_info', data);
         console.log("relayed device_info to clients");
       }
     }
   });
-  
-  socket.on('get_token', function (data) {console.log("<< ------------------ hit get_token");
-    var public_ip = socket.request.connection.remoteAddress;
-    public_ip = public_ip.slice(7);
-    var mac = data.mac;
-    var local_ip = data.local_ip;
-    var port = data.port;
-    var device_type = data.device_type;
-    var device_name = data.device_name;
-    console.log(mac + " | " + device_name + " " + local_ip + " " + public_ip +  ":"+ port);
-    var post_data = { mac:mac, local_ip:local_ip, public_ip:public_ip, port:port, device_type:device_type, device_name:device_name };  
-    var response = request.post('http://pyfi.org/php/add_device.php', {form: post_data},
-    function (error, response, data) { 
-      //console.log(mac + " | add_device.php");
-      if (!error && response.statusCode == 200) {
-        if (/^[\],:{}\s]*$/.test(data.replace(/\\["\\\/bfnrtu]/g, '@').
-          replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']').
-          replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
-        try { data = JSON.parse(data) }
-        catch (e) { console.log("invalid json") };
-            console.log("json is ok");
-        } else {
-          console.log("json is bad");
-        }
-        socket.emit('token',data);
-        console.log("add_device.php | " + data);   
-        var index = client_objects.indexOf(socket);
-        if (index != -1) {
-          client_object = { socket:socket, mac:mac, token:data.token };
-          client_objects[index] = client_object;
-          console.log(mac + ' | device added to client_objects ');      
-        }
-      }
-    });
-  });   
 
-  socket.on('cmd_gateway_device', function (data) {
+  socket.on('set zwave', function (data) {
     for (var i=0; i < client_objects.length; i++) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
       var _mac = client_objects[i].mac; 
       if (_token && _token === data.token) {
-        _socket.emit('cmd_gateway_device', data);
-        console.log(_mac + " | cmd_gateway_device " + data);
+        _socket.emit('set zwave', data);
+        console.log("set zwave",data);
       }
     }
   });
     
   socket.on('get devices', function (data) {
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      var _mac = client_objects[i].mac; 
-      if (_token && _token === data.token) {
-        _socket.emit('get devices', data);
-        console.log(data.mac + " | get devices ");
-      }
-    }
+    get_devices(data,socket);
   });
 
+  function get_devices(data,socket) {
+    var devices = [];
+    console.log('group_id',data.mac);
+    var group_index = find_index(groups,'group_id',data.token);
+    if (group_index < 0) return;
+    console.log("group",groups[group_index]);
+    devices.push(groups[group_index]);
+    for (var i=0; i < groups[group_index].members.length; i++) {
+      var client_index = find_index(client_objects,'token',groups[group_index].members[i]);
+      if (client_index < 0)
+        var device_index = find_index(device_objects,'token',groups[group_index].members[i]);
+      if (client_objects[client_index]) {
+        var temp_object = Object.assign({}, client_objects[client_index]);
+        delete temp_object.socket;
+        devices.push(temp_object);
+      } else
+      if (device_objects[device_index]) {
+        var temp_object = device_objects[device_index];
+        delete temp_object.socket
+        devices.push(temp_object)
+      }
+      //var member_index = find_index(groups,'group_id',groups[group_index].members[i]);
+      //groups[member_index].      
+    }
+    //console.log('get_devices',devices);
+    socket.emit('get devices',{devices:devices});
+  }
+
   socket.on('load devices', function (data) {
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      if (_token && _token === data.token) {
-        _socket.emit('load devices',data);
-        console.log(data.mac + " | load devices",data);
+    var devices = [];
+    var index = find_index(groups,'group_id',data.token);
+    if (index < 0) return;
+
+    for (var i=0; i < groups[index].members.length; i++) {
+      var index2 = find_index(client_objects,'token',groups[index].members[i]);
+      if (index2 < 0) return;
+      if (client_objects[index2].socket) {
+        console.log('load devices |',client_objects[index2].mac);
+        client_objects[index2].socket.emit('load devices',data);
+      } else {
+        console.log("no socket |",client_objects[index2].mac);
       }
     }
   });
 
   socket.on('load settings', function (data) {
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      if (_token && _token === data.token) {
-        _socket.emit('load settings', data);
-        //console.log(data.mac + " | load_settings",data);
+    var devices = [];
+    var index = find_index(groups,'group_id',data.token);
+    if (index < 0) return;
+
+    for (var i=0; i < groups[index].members.length; i++) {
+      var index2 = find_index(client_objects,'token',groups[index].members[i]);
+      if (index2 < 0) return;
+      if (client_objects[index2].socket) {
+        //var temp_object = Object.assign({}, client_objects[index2]);
+        //delete temp_object.socket;
+        console.log('load settings |',data.mac);
+        client_objects[index2].socket.emit('load settings',data);
+      } else {
+        console.log("load settings | no socket |",client_objects[index2].mac);
       }
     }
   });
@@ -582,12 +718,15 @@ io.on('connection', function (socket) {
   });
 
   socket.on('get settings', function (data) {
-    for (var i=0; i < client_objects.length; i++) {
-      var _socket = client_objects[i].socket;
-      var _token = client_objects[i].token;
-      if (_token && _token === data.token) {
-        _socket.emit('get settings', data);
-        console.log(data.mac + " | get settings");
+    var index = find_index(groups,'group_id',data.token);
+    if (index < 0) return;
+
+    for (var i=0; i < groups[index].members.length; i++) {
+      var index2 = find_index(client_objects,'token',groups[index].members[i]);
+      if (client_objects[index2]) {
+        if (client_objects[index2].socket) {
+          client_objects[index2].socket.emit('get settings',data);
+        }
       }
     }
   });
@@ -608,20 +747,20 @@ io.on('connection', function (socket) {
     }
   });
   
-  socket.on('png_test', function (data) {
+/*  socket.on('png_test', function (data) {
     try { data = JSON.parse(data) }
     catch (e) { console.log("invalid json") }
-    console.log(data.mac + " | received ping, sending reply");
+    //console.log(data.mac + " | received ping, sending reply");
     socket.emit('png_test',{command:"ping!"});
-/*    timeout();
+    timeout();
 function timeout() {
     setTimeout(function () {
         console.log(socket.id + ' | ping!');
         socket.emit('png_test',{ping:"ping!"});
         timeout();
     }, 10000);
-}*/
-  });
+}
+  });*/
 
   socket.on('disconnect', function() {
     for(var i = 0, index = -1; i < client_objects.length; i++) {
