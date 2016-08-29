@@ -163,7 +163,7 @@ function store_client_object(client_object) {
       console.log('Unable to connect to the mongoDB server. Error:', err);
     } else {
       var collection = db.collection('clients');
-      console.log('store_client_object',temp_object);
+      //console.log('store_client_object',temp_object);
       
       collection.update({token:temp_object.token}, {$set:temp_object},{upsert:true}, function(err, item){
 	if (err) {
@@ -226,9 +226,7 @@ wss.on('connection', function connection(ws) {
         device_objects[index].device_type = device_type;
         store_device_object(device_objects[index]);
         device_objects[index].socket = ws;
-
-        var index = find_index(device_objects,'token',token);
-        console.log('updated device',device_object);
+        console.log('updated device',device_objects[index].mac);
       }
      
       var index = find_index(groups,'group_id',token);
@@ -268,9 +266,11 @@ wss.on('connection', function connection(ws) {
     }
 
     // --------------  room sensor  ----------------- //
+    if (!device_type) return;
     for (var i = 0; i < device_type.length; i++) {
       if (device_type[i] === "room_sensor") {
-        if (msg.magnitude > 300) {
+        if (msg.magnitude > 100) {
+          console.log("room_sensor",msg);
           var index = find_index(device_objects,'token',token);
           //loop through groups for device
           if (index < 0) return;
@@ -287,6 +287,11 @@ wss.on('connection', function connection(ws) {
               msg.status = 'presence';
             }    
             for (var k=0; k < groups[index2].members.length; k++) {
+              //console.log("room_sensor",groups[index2].members[k]);
+              var member_index = find_index(client_objects,'token',groups[index2].members[k]);
+              if (member_index < 0) continue;
+              if (client_objects[member_index].socket)
+                client_objects[member_index].socket.emit('room_sensor',msg);
               /*for (var k=0; k < client_objects.length; k++) {
                   if (groups[index2].members[j] == client_objects[k].token) {
                   console.log("messaging group member",msg.status);
@@ -295,7 +300,6 @@ wss.on('connection', function connection(ws) {
               }*/
             }
           }
-          console.log("room_sensor",msg);
         }
       }
     }
@@ -355,7 +359,7 @@ io.on('connection', function (socket) {
     
     var index = find_index(groups,'group_id',token);
     if (index < 0) {
-      var group = {group_id:token, mode:'init', device_type:['alarm'], members:[]};
+      var group = {group_id:token, mode:'init', device_type:['alarm'], members:[token]};
       groups.push(group);
       store_group(group);
     }
@@ -386,6 +390,10 @@ io.on('connection', function (socket) {
 
   socket.on('link device', function (data) {
     console.log("link device",data);
+    if (data.device_type == "lights") {
+      console.log("trying to link lights?");
+      return;
+    }
     var device_token = crypto.createHash('sha512').update(data.mac).digest('hex');
     var user_token = data.user_token;
     var device_name = data.device_name;
@@ -401,6 +409,7 @@ io.on('connection', function (socket) {
         client_objects[i].groups.push(user_token);
         client_objects[i].device_name = device_name;
         store_client_object(client_objects[i]);
+        client_objects[i].socket.emit('set settings',{device_name:device_name});
         console.log('link device',client_objects[i]);
       }
     }
@@ -513,7 +522,7 @@ io.on('connection', function (socket) {
   });
 
   socket.on('link lights', function (data) {
-    var token = data.token;
+    /*var token = data.token;
     for (var i=0; i < client_objects.length; i++) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
@@ -522,7 +531,7 @@ io.on('connection', function (socket) {
         _socket.emit('link lights', data);
         console.log("link lights",data);
       }
-    }
+    }*/
   });
 
   socket.on('store_schedule', function (data) {
@@ -601,17 +610,21 @@ io.on('connection', function (socket) {
     }
   });
 
-  socket.on('lights', function (data) {
-    var token = data.token;
-    console.log("lights | " + token);
-    for (var i=0; i < client_objects.length; i++) {
+  socket.on('set lights', function (data) {
+    var group_index = find_index(groups,'group_id',data.token);
+    for (var i = 0; i < groups[group_index].members.length; i++) {
+      console.log("set lights", groups[group_index].members[i]);
+      var client_index = find_index(client_objects,'token',data.token);
+      client_objects[client_index].socket.emit('set lights',data);
+    }
+    /*for (var i=0; i < client_objects.length; i++) {
       var _socket = client_objects[i].socket;
       var _token = client_objects[i].token;
       var _mac = client_objects[i].mac; 
       if (_token === token) {
         _socket.emit('lights', data);
       }
-    }
+    }*/
   });  
   
   socket.on('device_info', function (data) {
@@ -682,7 +695,7 @@ io.on('connection', function (socket) {
         console.log('load devices |',client_objects[index2].mac);
         client_objects[index2].socket.emit('load devices',data);
       } else {
-        console.log("no socket |",client_objects[index2].mac);
+        //console.log("no socket |",client_objects[index2].mac);
       }
     }
   });
@@ -698,10 +711,10 @@ io.on('connection', function (socket) {
       if (client_objects[index2].socket) {
         //var temp_object = Object.assign({}, client_objects[index2]);
         //delete temp_object.socket;
-        console.log('load settings |',data.mac);
+        //console.log('load settings |',client_objects[index2].mac);
         client_objects[index2].socket.emit('load settings',data);
       } else {
-        console.log("load settings | no socket |",client_objects[index2].mac);
+        //console.log("load settings | no socket |",client_objects[index2].mac);
       }
     }
   });
