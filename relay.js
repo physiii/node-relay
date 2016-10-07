@@ -269,7 +269,7 @@ wss.on('connection', function connection(ws) {
   ws.on('message', function incoming(message) {
     var msg = {};
     try { msg = JSON.parse(message) }
-    catch (e) { console.log("invalid json") };
+    catch (e) { console.log("invalid json", message) };
     var token = msg.token;
     var mac = msg.mac;
     var cmd = msg.cmd;
@@ -290,7 +290,7 @@ wss.on('connection', function connection(ws) {
     // --------------  respond to token requests  ----------------- //    
     if (cmd == "tok_req") {
       var token = crypto.createHash('sha512').update(mac).digest('hex');
-      try { ws.send('token' + token) }            
+      try { ws.send('{\"token\":\"'+token+'\"}') }            
       catch (e) { console.log("reply error | " + e) };
 
       var index = find_index(device_objects,'token',token);
@@ -310,7 +310,7 @@ wss.on('connection', function connection(ws) {
      
       var index = find_index(groups,'group_id',token);
       if (index < 0) {
-        var group = {group_id:token, mode:'init', device_type:['alarm'], members:[token]};
+        var group = {group_id:token, mode:'init', device_type:['alarm'], members:[token],IR:[],record_mode:false};
         groups.push(group);
         store_group(group);
       }
@@ -333,6 +333,20 @@ wss.on('connection', function connection(ws) {
 
     // ---------------  media controller  ----------------- //
     if (device_type === "media_controller") {
+      index = find_index(groups,'group_id',token);
+      console.log("media_controller",msg);
+      if (groups[index].record_mode.value == true) {
+        if (groups[index].IR.command) {
+          groups[index].IR.command.ir_codes.push(msg.ir_code);
+        } else {
+          var ir_obj =  {command:groups[index].record_mode.command,
+            ir_codes:[msg.ir_code]};
+            groups[index].IR.push(ir_obj);
+        }
+        groups[index].record_mode.value = false
+        store_group(groups[index]);
+        console.log("storing code",ir_obj);
+      }
       for (var i=0; i < device_objects.length; i++) {
         _token = device_objects[i].token;
         if (_token && _token === token) {
@@ -427,7 +441,7 @@ function message_user(token,msg) {
     //console.log("token1",token);
     //console.log("token2",user_objects[i].token);
     if (user_objects[i].token == token) {
-      console.log("messaging user",user_objects[i].token);
+      //console.log("messaging user",user_objects[i].token);
       user_objects[i].socket.emit(msg.device_type,msg);
     }
   }
@@ -619,6 +633,24 @@ io.on('connection', function (socket) {
     }
   });
 
+  socket.on('room_sensor_rec', function (data) {
+    var index = find_index(groups,'group_id',data.token);
+    groups[index].record_mode = {command:data.command,value:true};
+    console.log('room_sensor_rec',data);
+  });
+
+  socket.on('room_sensor', function (data) {
+    var group_index = find_index(groups,'group_id',data.token);
+    var ir_index = find_index(groups[group_index].IR,'command',data.command);
+    var command_obj = {"sendIR":groups[group_index].IR[ir_index].ir_codes};
+    console.log("command_obj", command_obj);
+    var index = find_index(device_objects,'token',data.token);
+    if (device_objects[index].socket)
+      device_objects[index].socket.send(JSON.stringify(command_obj));
+    else console.log("NO SOCKET?");
+    console.log('room_sensor',data);
+  });
+
   socket.on('siren', function (data) {
     for (var i=0; i < device_objects.length; i++) {
       var _socket = device_objects[i].socket;
@@ -642,6 +674,7 @@ io.on('connection', function (socket) {
         console.log("set_mobile.php | " + data);   
     });
   });
+
 
   socket.on('to mobile', function (data) {
     var token = data.token;
@@ -877,6 +910,20 @@ io.on('connection', function (socket) {
         }
       }
     }
+  });
+
+  socket.on('rename device', function (data) {
+    var devices = [];
+    var index = find_index(groups,'group_id',data.token);
+    console.log("!! rename device !!",data.token);
+    if (index < 0) return;
+    /*for (var i=0; i < groups[index].members.length; i++) {
+      for (var j=0; j < user_objects.length; j++) {
+        if (groups[index].members[i] == user_objects[j].token) {
+          user_objects[j].socket.emit('rename device',data);
+        }
+      }
+    }*/
   });
 
   socket.on('load settings', function (data) {
