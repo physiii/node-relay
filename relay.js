@@ -333,29 +333,29 @@ wss.on('connection', function connection(ws) {
 
     // ---------------  media controller  ----------------- //
     if (device_type === "media_controller") {
-      index = find_index(groups,'group_id',token);
-      console.log("media_controller",msg);
+      for (var j = 0; j < device_objects[device_index].groups.length; j++) {
+        message_user(device_objects[device_index].groups[j],msg);
+        var group_index = find_index(groups,'group_id',device_objects[device_index].groups[j]);
+        console.log("media_controller messing users",device_objects[device_index].groups[j]);
+        for (var k=0; k < groups[group_index].members.length; k++) {
+          message_device(groups[group_index].members[k],msg);
+          message_user(groups[group_index].members[k],msg);
+        }
+      }
+      var index = find_index(groups,'group_id',token);
       if (groups[index].record_mode.value == true) {
         if (groups[index].IR.command) {
           groups[index].IR.command.ir_codes.push(msg.ir_code);
         } else {
           var ir_obj =  {command:groups[index].record_mode.command,
             ir_codes:[msg.ir_code]};
-            groups[index].IR.push(ir_obj);
+          groups[index].IR.push(ir_obj);
         }
         groups[index].record_mode.value = false
         store_group(groups[index]);
         console.log("storing code",ir_obj);
       }
-      for (var i=0; i < device_objects.length; i++) {
-        _token = device_objects[i].token;
-        if (_token && _token === token) {
-          _socket = device_objects[i].socket;
-          _mac = device_objects[i].mac;
-          _socket.emit('media_controller', msg );  
-          console.log("media_controller",msg);
-        }
-      }
+      console.log("media_controller",msg);
     }
 
     // --------------  room sensor  ----------------- //
@@ -438,10 +438,7 @@ function message_device(token,msg) {
 
 function message_user(token,msg) {
   for (var i = 0; i < user_objects.length; i++) {
-    //console.log("token1",token);
-    //console.log("token2",user_objects[i].token);
     if (user_objects[i].token == token) {
-      //console.log("messaging user",user_objects[i].token);
       user_objects[i].socket.emit(msg.device_type,msg);
     }
   }
