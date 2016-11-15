@@ -55,6 +55,28 @@ setTimeout(function () {
   console.log("main loop");
 }, 60*1000);
 }
+
+/*function get_public_ip() {
+  var response = request.post("http://pyfi.org/php/get_ip.php", {token:settings_obj.token,id:"relay"},
+    function (error, response, data) {
+      console.log("get_ip.php | ",data);   
+    });
+}*/
+function get_public_ip() {
+  request.get(
+  'http://pyfi.org/php/get_ip.php',
+  function (error, response, data) {
+    if (!error && response.statusCode == 200) {
+      public_ip = data;
+      settings_obj.public_ip = public_ip;
+      //console.log('public_ip ' + data);
+      store_settings({public_ip:public_ip});
+      if (error !== null) {
+       console.log('error ---> ' + error);
+      }      
+    }
+  });
+}
 // -------------------------------  MangoDB  --------------------------------- //
 var mongodb = require('mongodb');
 var ObjectId = require('mongodb').ObjectID;
@@ -284,7 +306,25 @@ wss.on('connection', function connection(ws) {
       command = "png_test";
       try { ws.send('command' + command) }
       catch (e) { console.log("reply error | " + e) };        
+      ping_time = Date.now() - ping_start;
       //console.log(mac + " | received ping, sending reply ");
+    }
+
+    // ------------------  send device info  --------------------- //    
+    if (cmd == "version") {
+      if (!device_objects[device_index])
+        return;
+      for (var j = 0; j < device_objects[device_index].groups.length; j++) {
+        message_user(device_objects[device_index].groups[j],msg);
+        var group_index = find_index(groups,'group_id',device_objects[device_index].groups[j]);
+        console.log("media_controller messing users",device_objects[device_index].groups[j]);
+        for (var k=0; k < groups[group_index].members.length; k++) {
+          message_device(groups[group_index].members[k],msg);
+          message_user(groups[group_index].members[k],msg);
+        }
+      }
+
+      console.log("sending version number",msg);
     }
 
     // --------------  respond to token requests  ----------------- //    
@@ -344,18 +384,21 @@ wss.on('connection', function connection(ws) {
       }
       var index = find_index(groups,'group_id',token);
       if (groups[index].record_mode.value == true) {
-        if (groups[index].IR.command) {
-          groups[index].IR.command.ir_codes.push(msg.ir_code);
+        var ir_index = find_index(groups[index].IR,'command',groups[index].record_mode.command);
+        if (ir_index > -1) {
+          groups[index].IR[ir_index].ir_codes.push(msg.ir_code);
+          console.log("pushing onto ir_codes",ir_obj);
         } else {
           var ir_obj =  {command:groups[index].record_mode.command,
             ir_codes:[msg.ir_code]};
           groups[index].IR.push(ir_obj);
+          console.log("storing new ir_codes",ir_obj);
         }
         groups[index].record_mode.value = false
         store_group(groups[index]);
-        console.log("storing code",ir_obj);
+        console.log("storing code",groups[index]);
       }
-      console.log("media_controller",msg);
+      console.log("media_controller",groups[index]);
     }
 
     // --------------  room sensor  ----------------- //
@@ -378,6 +421,8 @@ wss.on('connection', function connection(ws) {
             if (groups[group_index].mode == 'armed') {
               for (var k=0; k < groups[group_index].contacts.length; k++) {
                 var contact = {number:groups[group_index].contacts[k].number,user:mac,msg:msg};
+                console.log("room_sensor text");
+                contact.device_name = msg.device_name;
                 text(contact);
               }
             }
@@ -403,6 +448,7 @@ wss.on('connection', function connection(ws) {
           if (groups[group_index].mode == 'armed') {
             for (var k=0; k < groups[group_index].contacts.length; k++) {
               var contact = {number:groups[group_index].contacts[k].number,user:mac,msg:msg};
+              console.log("motion_sensor text");
               text(contact);
             }
           }
@@ -445,18 +491,17 @@ function message_user(token,msg) {
 }
 
 function text(contact) {
-  var response = request.post("http://"+settings_obj.public_ip+":8080/open-automation.org/php/gmail.php", {form: contact},
+  var text_url = "http://"+settings_obj.public_ip+":8080/open-automation.org/php/gmail.php";
+  console.log("text_url",text_url);
+  console.log("contact",contact);
+  var response = request.post(text_url, {form: contact},
+  //var response = request.post(text_url, contact,
   function (error, response, data) {
     console.log("gmail.php | ",data);   
   });
 }
 
-function get_public_ip() {
-  var response = request.post("http://pyfi.org/php/get_ip.php", {token:settings_obj.token,id:"relay"},
-    function (error, response, data) {
-      console.log("get_ip.php | ",data);   
-    });
-}
+
 
 function find_index(array, key, value) {
   for (var i=0; i < array.length; i++) {
@@ -631,14 +676,31 @@ io.on('connection', function (socket) {
   });
 
   socket.on('room_sensor_rec', function (data) {
-    var index = find_index(groups,'group_id',data.token);
-    groups[index].record_mode = {command:data.command,value:true};
-    console.log('room_sensor_rec',data);
+    var group_index = find_index(groups,'group_id',data.token);
+    groups[group_index].record_mode = {command:data.command,value:true};
+    console.log('room_sensor_rec',groups[group_index]);
+    /*if (data.clear) {
+      var ir_index = find_index(groups[group_index].IR,'command',data.command);
+      delete groups[group_index].IR[ir_index].ir_codes;
+      store_group(groups[group_index]);
+      console.log('room_sensor_clear',groups[group_index].IR[ir_index]);
+    } else {*/
+
+    //}
+  });
+
+  socket.on('room_sensor_clear', function (data) {
+    var group_index = find_index(groups,'group_id',data.token);
+    var ir_index = find_index(groups[group_index].IR,'command',data.command);
+    groups[group_index].IR[ir_index].ir_codes = [];
+    store_group(groups[group_index]);
+    console.log('room_sensor_clear',groups[group_index].IR[ir_index]);
   });
 
   socket.on('room_sensor', function (data) {
     var group_index = find_index(groups,'group_id',data.token);
     var ir_index = find_index(groups[group_index].IR,'command',data.command);
+    if (!groups[group_index].IR[ir_index]) return;
     var command_obj = {"sendIR":groups[group_index].IR[ir_index].ir_codes};
     console.log("command_obj", command_obj);
     var index = find_index(device_objects,'token',data.token);
@@ -660,7 +722,7 @@ io.on('connection', function (socket) {
     }
   });
 
-  socket.on('set_mobile', function (data) {
+  socket.on('set mobile', function (data) {
     try { data = JSON.parse(data) }
     catch (e) { console.log("invalid json") }
     var server = data.server;
@@ -914,14 +976,34 @@ io.on('connection', function (socket) {
     var index = find_index(groups,'group_id',data.token);
     console.log("!! rename device !!",data.token);
     if (index < 0) return;
-    /*for (var i=0; i < groups[index].members.length; i++) {
-      for (var j=0; j < user_objects.length; j++) {
-        if (groups[index].members[i] == user_objects[j].token) {
-          user_objects[j].socket.emit('rename device',data);
+    for (var i=0; i < groups[index].members.length; i++) {
+      for (var j=0; j < device_objects.length; j++) {
+        if (groups[index].members[i] == device_objects[j].token) {
+          device_objects[j].device_name = data.device_name;
+          store_device_object(device_objects[j]);
+          device_objects[j].socket.emit('rename device',data);
         }
       }
-    }*/
+    }
   });
+
+  socket.on('update', function (data) {
+    var devices = [];
+    var index = find_index(groups,'group_id',data.token);
+    console.log("!! update device !!",data.token);
+    if (index < 0) return;
+    for (var i=0; i < groups[index].members.length; i++) {
+      for (var j=0; j < device_objects.length; j++) {
+        if (groups[index].members[i] == device_objects[j].token) {
+          device_objects[j].device_name = data.device_name;
+          store_device_object(device_objects[j]);
+          if (device_objects[j].socket)
+            device_objects[j].socket.send(JSON.stringify({"update":true}));
+        }
+      }
+    }
+  });
+
 
   socket.on('load settings', function (data) {
     var group_index = find_index(groups,'group_id',data.token);
@@ -978,9 +1060,7 @@ io.on('connection', function (socket) {
     }
   });
   
-/*  socket.on('png_test', function (data) {
-    try { data = JSON.parse(data) }
-    catch (e) { console.log("invalid json") }
+  socket.on('png_test', function (data) {
     //console.log(data.mac + " | received ping, sending reply");
     socket.emit('png_test',{command:"ping!"});
     timeout();
@@ -991,7 +1071,7 @@ function timeout() {
         timeout();
     }, 10000);
 }
-  });*/
+  });
 
   socket.on('disconnect', function() {
     var index = find_index(device_objects,'socket',socket);
