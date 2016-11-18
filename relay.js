@@ -520,6 +520,7 @@ io.on('connection', function (socket) {
     var public_ip = socket.request.connection.remoteAddress;
     public_ip = public_ip.slice(7);
     var device_name = data.device_name;
+    //var salt = data.salt //some random value
     var token = crypto.createHash('sha512').update(data.mac).digest('hex');
     var temp_object = Object.assign({}, data);
     temp_object.token = token;
@@ -723,14 +724,42 @@ io.on('connection', function (socket) {
   });
 
   socket.on('set mobile', function (data) {
-    try { data = JSON.parse(data) }
-    catch (e) { console.log("invalid json") }
     var server = data.server;
-    console.log(data.server);
     var response = request.post(data.server, {form: data},
     function (error, response, data) {
-        socket.emit('token',data);
-        console.log("set_mobile.php | " + data);   
+      console.log("set_mobile.php | ", data);
+      
+
+    /*var public_ip = socket.request.connection.remoteAddress;
+    public_ip = public_ip.slice(7);
+    var device_name = data.device_name;
+    //var salt = data.salt //some random value
+    var token = crypto.createHash('sha512').update(data.mac).digest('hex');
+    var temp_object = Object.assign({}, data);
+    temp_object.token = token;
+    temp_object.public_ip = public_ip;
+    socket.emit('get token',temp_object);
+    store_device_object(temp_object);
+    temp_object.socket = socket;
+    var index = find_index(device_objects,'token',token);
+    if (index > -1) {
+      device_objects[index] = temp_object;
+      console.log('updated client',temp_object.mac);
+    } else {
+      device_objects.push(temp_object);
+      store_device_object(temp_object);
+      console.log('added client',temp_object.mac);
+    }
+    
+    var index = find_index(groups,'group_id',token);
+    if (index < 0) {
+      var group = {group_id:token, mode:'init', device_type:['alarm'], members:[token]};
+      groups.push(group);
+      store_group(group);
+    }
+
+
+      socket.emit('token',data);   */
     });
   });
 
@@ -1066,7 +1095,7 @@ io.on('connection', function (socket) {
     timeout();
 function timeout() {
     setTimeout(function () {
-        console.log(socket.id + ' | ping!');
+        //console.log(socket.id + ' | ping!');
         socket.emit('png_test',{ping:"ping!"});
         timeout();
     }, 10000);
