@@ -52,7 +52,7 @@ function main_loop () {
 setTimeout(function () {
   get_public_ip();
   main_loop();
-  console.log("main loop");
+  //console.log("main loop");
 }, 60*1000);
 }
 
@@ -376,7 +376,7 @@ wss.on('connection', function connection(ws) {
       for (var j = 0; j < device_objects[device_index].groups.length; j++) {
         message_user(device_objects[device_index].groups[j],msg);
         var group_index = find_index(groups,'group_id',device_objects[device_index].groups[j]);
-        console.log("media_controller messing users",device_objects[device_index].groups[j]);
+        //console.log("media_controller messing users",device_objects[device_index].groups[j]);
         for (var k=0; k < groups[group_index].members.length; k++) {
           message_device(groups[group_index].members[k],msg);
           message_user(groups[group_index].members[k],msg);
@@ -398,7 +398,7 @@ wss.on('connection', function connection(ws) {
         store_group(groups[index]);
         console.log("storing code",groups[index]);
       }
-      console.log("media_controller",groups[index]);
+      //console.log("media_controller",groups[index]);
     }
 
     // --------------  room sensor  ----------------- //
@@ -723,46 +723,94 @@ io.on('connection', function (socket) {
     }
   });
 
-  socket.on('set mobile', function (data) {
+  socket.on('link mobile', function (data) {
     var server = data.server;
-    var response = request.post(data.server, {form: data},
-    function (error, response, data) {
-      console.log("set_mobile.php | ", data);
-      
-
-    /*var public_ip = socket.request.connection.remoteAddress;
+    var public_ip = socket.request.connection.remoteAddress;
     public_ip = public_ip.slice(7);
     var device_name = data.device_name;
-    //var salt = data.salt //some random value
-    var token = crypto.createHash('sha512').update(data.mac).digest('hex');
+    var token = data.token;
+    data.token = token;
     var temp_object = Object.assign({}, data);
-    temp_object.token = token;
     temp_object.public_ip = public_ip;
-    socket.emit('get token',temp_object);
     store_device_object(temp_object);
     temp_object.socket = socket;
     var index = find_index(device_objects,'token',token);
     if (index > -1) {
       device_objects[index] = temp_object;
-      console.log('updated client',temp_object.mac);
+      console.log('updated mobile',temp_object.token);
     } else {
       device_objects.push(temp_object);
       store_device_object(temp_object);
-      console.log('added client',temp_object.mac);
+      console.log('added mobile',temp_object.token);
     }
-    
     var index = find_index(groups,'group_id',token);
     if (index < 0) {
       var group = {group_id:token, mode:'init', device_type:['alarm'], members:[token]};
       groups.push(group);
       store_group(group);
     }
+    socket.emit('link mobile',data);
+  });
 
-
-      socket.emit('token',data);   */
+  socket.on('set mobile', function (data) {
+    var token = crypto.createHash('sha512').update(data.mac).digest('hex');
+    data.token = token;
+    /*var server = data.server;
+    var public_ip = socket.request.connection.remoteAddress;
+    public_ip = public_ip.slice(7);
+    var device_name = data.device_name;
+    //var salt = data.salt //some random value
+    var temp_object = Object.assign({}, data);
+    temp_object.public_ip = public_ip;
+    store_device_object(temp_object);
+    temp_object.socket = socket;
+    var index = find_index(device_objects,'token',token);
+    if (index > -1) {
+      device_objects[index] = temp_object;
+      console.log('updated mobile',temp_object.mac);
+    } else {
+      device_objects.push(temp_object);
+      store_device_object(temp_object);
+      console.log('added mobile',temp_object.mac);
+    }
+    var index = find_index(groups,'group_id',token);
+    if (index < 0) {
+      var group = {group_id:token, mode:'init', device_type:['alarm'], members:[token]};
+      groups.push(group);
+      store_group(group);
+    }*/
+    var response = request.post(data.server, {form: data},
+    function (error, response, data) {
+      console.log("set_mobile.php | ", data);
+      socket.emit('token',data);
     });
   });
 
+  socket.on('set trigger location', function (data) {
+    var index = find_index(device_objects,'token',data.token);
+    if (index < 0) return console.log('device_object not found: ',data.token);
+    device_objects[index].current_location = data;
+    if (device_objects[index].locations) {
+      device_objects[index].locations.push(data);
+    } else {
+      device_objects[index].locations = [data];
+    }
+    store_device_object(device_objects[index]);
+    console.log('set location',data.mac);
+  });
+
+  socket.on('set location', function (data) {
+    var index = find_index(device_objects,'token',data.token);
+    if (index < 0) return console.log('device_object not found: ',data.token);
+    device_objects[index].current_location = data;
+    if (device_objects[index].locations) {
+      device_objects[index].locations.push(data);
+    } else {
+      device_objects[index].locations = [data];
+    }
+    store_device_object(device_objects[index]);
+    console.log('set location',data.mac);
+  });
 
   socket.on('to mobile', function (data) {
     var token = data.token;
@@ -1103,8 +1151,8 @@ function timeout() {
   });
 
   socket.on('disconnect', function() {
-    var index = find_index(device_objects,'socket',socket);
-    if (index > -1) device_objects.splice(index,1);
+    //var index = find_index(device_objects,'socket',socket);
+    //if (index > -1) device_objects.splice(index,1);
     var index = find_index(user_objects,'socket',socket);
     if (index > -1) user_objects.splice(index,1);
 
