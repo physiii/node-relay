@@ -786,7 +786,8 @@ io.on('connection', function (socket) {
     });
   });
 
-  socket.on('set trigger location', function (data) {
+  socket.on('set trigger', function (data) {
+    console.log("set trigger!!",data);
     var index = find_index(device_objects,'token',data.token);
     if (index < 0) return console.log('device_object not found: ',data.token);
     device_objects[index].current_location = data;
