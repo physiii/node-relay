@@ -237,12 +237,12 @@ function store_group(group) {
 function store_device_object(device_object) {
   var temp_object = Object.assign({}, device_object);
   delete temp_object.socket;
+  //console.log('store_device_object',temp_object);
   MongoClient.connect('mongodb://127.0.0.1:27017/devices', function (err, db) {
     if (err) {
       console.log('Unable to connect to the mongoDB server. Error:', err);
     } else {
       var collection = db.collection('devices');
-      //console.log('store_device_object');
       collection.update({token:temp_object.token}, {$set:temp_object},{upsert:true}, function(err, item){
 	if (err) {
           console.log(err);
@@ -345,7 +345,7 @@ wss.on('connection', function connection(ws) {
         device_objects[index].device_type = device_type;
         store_device_object(device_objects[index]);
         device_objects[index].socket = ws;
-        console.log('updated device',device_objects[index].mac);
+        //console.log('updated device',device_objects[index].mac);
       }
      
       var index = find_index(groups,'group_id',token);
@@ -531,7 +531,7 @@ io.on('connection', function (socket) {
     var index = find_index(device_objects,'token',token);
     if (index > -1) {
       device_objects[index] = temp_object;
-      console.log('updated client',temp_object.mac);
+      //console.log('updated client',temp_object.mac);
     } else {
       device_objects.push(temp_object);
       store_device_object(temp_object);
@@ -591,7 +591,7 @@ io.on('connection', function (socket) {
       store_group(groups[index]);
     }
 
-    //add user to device
+    //add user to device for incoming messages
     var index = find_index(device_objects,'token',device_token);
     if (device_objects[index].groups.indexOf(user_token) < 0) {
       device_objects[index].groups.push(user_token);
@@ -617,6 +617,13 @@ io.on('connection', function (socket) {
     device_objects[index].groups.splice(index,1);
     store_device_object(device_objects[index]);
     console.log('unlink device',groups[index]);
+  });
+
+  socket.on('ffmpeg', function (data) {
+    var device_index = find_index(device_objects,'token',data.token);
+    if (device_index > -1)
+      if (device_objects[device_index].socket)
+        device_objects[device_index].socket.emit('ffmpeg',data);
   });
 
   socket.on('get contacts', function (data) {
@@ -726,22 +733,18 @@ io.on('connection', function (socket) {
   socket.on('link mobile', function (data) {
     var server = data.server;
     var public_ip = socket.request.connection.remoteAddress;
-    public_ip = public_ip.slice(7);
-    var device_name = data.device_name;
+    data.public_ip = public_ip.slice(7);
     var token = data.token;
-    data.token = token;
-    var temp_object = Object.assign({}, data);
-    temp_object.public_ip = public_ip;
-    store_device_object(temp_object);
-    temp_object.socket = socket;
+    var user_token = data.token;
+    var device_token = data.token;
     var index = find_index(device_objects,'token',token);
     if (index > -1) {
-      device_objects[index] = temp_object;
-      console.log('updated mobile',temp_object.token);
+      device_objects[index].token = data.token;
+      console.log('updated mobile',data.token);
     } else {
-      device_objects.push(temp_object);
-      store_device_object(temp_object);
-      console.log('added mobile',temp_object.token);
+      device_objects.push(data);
+      store_device_object(data);
+      console.log('added mobile',data.token);
     }
     var index = find_index(groups,'group_id',token);
     if (index < 0) {
@@ -749,36 +752,32 @@ io.on('connection', function (socket) {
       groups.push(group);
       store_group(group);
     }
+
+    //add device to user group
+    var index = find_index(groups,'group_id',user_token);
+    if (groups[index].members.indexOf(device_token) < 0) {
+      groups[index].members.push(device_token);
+      store_group(groups[index]);
+    }
+
+    //add user to device group
+    var index = find_index(groups,'group_id',device_token);
+    if (groups[index].members.indexOf(user_token) < 0) {
+      groups[index].members.push(user_token);
+      store_group(groups[index]);
+    }
+
     socket.emit('link mobile',data);
+    /*var device_name = data.device_name;
+    var temp_object = Object.assign({}, data);
+    temp_object.public_ip = public_ip;
+    store_device_object(temp_object);
+    temp_object.socket = socket;*/
   });
 
   socket.on('set mobile', function (data) {
     var token = crypto.createHash('sha512').update(data.mac).digest('hex');
     data.token = token;
-    /*var server = data.server;
-    var public_ip = socket.request.connection.remoteAddress;
-    public_ip = public_ip.slice(7);
-    var device_name = data.device_name;
-    //var salt = data.salt //some random value
-    var temp_object = Object.assign({}, data);
-    temp_object.public_ip = public_ip;
-    store_device_object(temp_object);
-    temp_object.socket = socket;
-    var index = find_index(device_objects,'token',token);
-    if (index > -1) {
-      device_objects[index] = temp_object;
-      console.log('updated mobile',temp_object.mac);
-    } else {
-      device_objects.push(temp_object);
-      store_device_object(temp_object);
-      console.log('added mobile',temp_object.mac);
-    }
-    var index = find_index(groups,'group_id',token);
-    if (index < 0) {
-      var group = {group_id:token, mode:'init', device_type:['alarm'], members:[token]};
-      groups.push(group);
-      store_group(group);
-    }*/
     var response = request.post(data.server, {form: data},
     function (error, response, data) {
       console.log("set_mobile.php | ", data);
@@ -786,31 +785,49 @@ io.on('connection', function (socket) {
     });
   });
 
-  socket.on('set trigger', function (data) {
-    console.log("set trigger!!",data);
+  socket.on('set zone', function (data) {
     var index = find_index(device_objects,'token',data.token);
     if (index < 0) return console.log('device_object not found: ',data.token);
-    device_objects[index].current_location = data;
-    if (device_objects[index].locations) {
-      device_objects[index].locations.push(data);
+    if (device_objects[index].zones) {
+      device_objects[index].zones.push(data);
     } else {
-      device_objects[index].locations = [data];
+      device_objects[index].zones = [data];
     }
     store_device_object(device_objects[index]);
-    console.log('set location',data.mac);
+    console.log('!! set zone !!',data.mac);
   });
 
   socket.on('set location', function (data) {
     var index = find_index(device_objects,'token',data.token);
     if (index < 0) return console.log('device_object not found: ',data.token);
+    console.log('set location',data.mac);
     device_objects[index].current_location = data;
     if (device_objects[index].locations) {
       device_objects[index].locations.push(data);
     } else {
       device_objects[index].locations = [data];
     }
+    if (!device_objects[index].zones) return;
+    for (var i = 0; i < device_objects[index].zones.length; i++) {
+      if (device_objects[index].zones[i].wifi) {
+        if (data.current_wifi == device_objects[index].zones[i].wifi) {
+          if (!device_objects[index].groups)
+            return console.log("no groups found in device_objects");
+          for (var j = 0; j < device_objects[index].groups.length; j++) {
+            var group_index = find_index(groups,'group_id',device_objects[index].groups[j]);
+            console.log("group",device_objects[index].groups[j]);
+            data.mode = groups[group_index].mode;
+            message_user(device_objects[index].groups[j],data);
+            for (var k=0; k < groups[group_index].members.length; k++) {
+              message_device(groups[group_index].members[k],data);
+              message_user(groups[group_index].members[k],data);
+            }
+          }
+          console.log("!! inside zone !!",data.current_wifi);
+        }
+      }
+    }
     store_device_object(device_objects[index]);
-    console.log('set location',data.mac);
   });
 
   socket.on('to mobile', function (data) {
@@ -1138,7 +1155,7 @@ io.on('connection', function (socket) {
     }
   });
   
-  socket.on('png_test', function (data) {
+  /*socket.on('png_test', function (data) {
     //console.log(data.mac + " | received ping, sending reply");
     socket.emit('png_test',{command:"ping!"});
     timeout();
@@ -1149,7 +1166,7 @@ function timeout() {
         timeout();
     }, 10000);
 }
-  });
+  });*/
 
   socket.on('disconnect', function() {
     //var index = find_index(device_objects,'socket',socket);
