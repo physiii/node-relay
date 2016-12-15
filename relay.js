@@ -619,11 +619,38 @@ io.on('connection', function (socket) {
     console.log('unlink device',groups[index]);
   });
 
+//----------- ffmpeg ----------//
   socket.on('ffmpeg', function (data) {
+    var device_index = find_index(device_objects,'token',data.token);
+    if (device_index < 0) return console.log('device not found',data);
+    if (!device_objects[device_index].socket) return console.log('socket not found',data);
+    device_objects[device_index].socket.emit('ffmpeg',data);
+  });
+
+  socket.on('ssh', function (data) {
     var device_index = find_index(device_objects,'token',data.token);
     if (device_index > -1)
       if (device_objects[device_index].socket)
-        device_objects[device_index].socket.emit('ffmpeg',data);
+        device_objects[device_index].socket.emit('ssh',data);
+  });
+
+  socket.on('ssh_out', function (data) {
+    var group_index = find_index(groups,'group_id',data.token);
+    if (group_index < 0) return console.log("no device for ssh_out");
+    for (var i=0; i < groups[group_index].members.length; i++) {
+      for (var j=0; j < user_objects.length; j++) {
+        if (user_objects[j].token == groups[group_index].members[i]) {
+          user_objects[j].socket.emit('ssh_out',data);
+        }
+      }
+    }
+  });
+
+  socket.on('camera', function (data) {
+    var device_index = find_index(device_objects,'token',data.token);
+    if (device_index > -1)
+      if (device_objects[device_index].socket)
+        device_objects[device_index].socket.emit('camera',data);
   });
 
   socket.on('get contacts', function (data) {
@@ -649,9 +676,9 @@ io.on('connection', function (socket) {
 
   socket.on('media', function (data) {
     var device_index = find_index(device_objects,'token',data.token);
-    if (device_index > -1)
-      if (device_objects[device_index].socket)
-        device_objects[device_index].socket.emit('media',data);
+    if (device_index < 0) return console.log('media | invalid token',data);
+    if (device_objects[device_index].socket)
+      device_objects[device_index].socket.emit('media',data);
   });
 
   socket.on('set alarm', function (data) {
@@ -768,13 +795,10 @@ io.on('connection', function (socket) {
     }
 
     socket.emit('link mobile',data);
-    /*var device_name = data.device_name;
-    var temp_object = Object.assign({}, data);
-    temp_object.public_ip = public_ip;
-    store_device_object(temp_object);
-    temp_object.socket = socket;*/
   });
 
+
+  //TODO: make this access local mysql (goal is to move all php/mysql to nodejs/mongo)
   socket.on('set mobile', function (data) {
     var token = crypto.createHash('sha512').update(data.mac).digest('hex');
     data.token = token;
@@ -918,10 +942,20 @@ io.on('connection', function (socket) {
 
 
   socket.on('add thermostat', function (data) {
+
     var device_index = find_index(device_objects,'token',data.token);
+    if (device_index < 0) return console.log('media | invalid token',data);
     if (device_objects[device_index].socket)
-      device_objects[device_index].socket.emit('add thermostat', data);
+      device_objects[device_index].socket.emit('add thermostat',data);
+
     console.log('add thermostat',data);
+    /*var device_index = find_index(device_objects,'token',data.token);
+    if (device_index < 0) return console.log("add thermostat | invalid token",data);
+    if (device_objects[device_index].socket)
+      device_objects[device_index].socket.emit('add thermostat', data);*/
+
+
+
     /*for (var i = 0; i < groups[group_index].members.length; i++) {
     }
 
@@ -1179,3 +1213,87 @@ function timeout() {
 
 });
 
+
+//-------------- stream ----------------//
+var STREAM_SECRET = "init",
+    STREAM_PORT = 8082,
+    WEBSOCKET_PORT = 8084,
+    STREAM_MAGIC_BYTES = 'jsmp'; // Must be 4 bytes
+
+var stream_width = 800,
+    stream_height = 600;
+
+// Websocket Server
+var socketServer = new (require('ws').Server)({port: WEBSOCKET_PORT});
+socketServer.on('connection', function(socket) {
+  // Send magic bytes and video size to the newly connected socket
+  // struct { char magic[4]; unsigned short width, height;}
+  var streamHeader = new Buffer(8);
+  streamHeader.write(STREAM_MAGIC_BYTES);
+  streamHeader.writeUInt16BE(stream_width, 4);
+  streamHeader.writeUInt16BE(stream_height, 6);
+  socket.send(streamHeader, {binary:true});
+  console.log( 'new video socket connection ('+socketServer.clients.length+' total)' );
+  socket.on('close', function(code, message){
+    var index = find_index(user_objects,'socket',socket);
+    if (index > -1) user_objects.splice(index,1);
+    console.log( 'video socket closed ('+socketServer.clients.length+' total)' );
+  });
+  socket.onmessage = function (event) {
+    var token = event.data;
+    socket.token = token;
+    /*var index = find_index(device_objects,'token',token);
+    if (index < 0) return console.log('token not found');
+    device_objects[index].camera_socket = socket;*/
+    console.log("stored video token",socket.token);
+  }
+});
+
+socketServer.on('disconnect', function(socket) {
+    var index = find_index(user_objects,'socket',socket);
+    if (index > -1) user_objects.splice(index,1);
+    console.log( 'disconnect video socket ('+socketServer.clients.length+' total)' );
+});
+
+
+socketServer.broadcast = function(data, opts, token) {
+  for( var i in this.clients ) {
+    var client = this.clients[i];
+    if (client.readyState != 1) {
+      console.log("Client not connected ("+i+")");
+      continue;
+    }
+    if (client.token != token) {
+      //console.log("camera: "+token);
+      //console.log("client:   "+client.token);
+      continue;
+    }
+    this.clients[i].send(data, opts);
+    //console.log("<< !!! SENDING BROADCAST ("+i+") !!! >>>");
+  }
+};
+
+// HTTP Server to accept incomming MPEG Stream
+var streamServer = require('http').createServer( function(request, response) {
+  var params = request.url.substr(1).split('/');
+  var token = params[0];
+  var index = find_index(device_objects,'token',token);
+  if (index < 0) return console.log('device not found');
+  device_objects[index];
+  response.connection.setTimeout(0);
+  request.on('data', function(data){
+    socketServer.broadcast(data, {binary:true},token);
+  });
+	//}
+	/*else {
+		console.log(
+			'Failed Stream Connection: '+ request.socket.remoteAddress + 
+			request.socket.remotePort + ' - wrong secret.'
+		);
+		response.end();
+	}*/
+}).listen(STREAM_PORT);
+
+console.log('Listening for MPEG Stream on http://127.0.0.1:'+STREAM_PORT+'/<token>/<width>/<height>');
+console.log('Awaiting WebSocket connections on ws://127.0.0.1:'+WEBSOCKET_PORT+'/');
+//------------------------------//
