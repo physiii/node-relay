@@ -1254,7 +1254,7 @@ io.on('connection', function (socket) {
         devices.push(temp_object)
       } 
     }
-    console.log('get_devices2',devices);
+    //console.log('get_devices2',devices);
     socket.emit('get devices',{devices:devices});
   }
 

@@ -100,7 +100,7 @@ angular.module('starter.controllers', ['socket-io'])
   $rootScope.alert_contacts = [];
 
   //relay_socket.emit('get user token',{mac:$rootScope.username,user:$rootScope.username});
-  relay_socket.on('room_sensor', function (data) {
+relay_socket.on('room_sensor', function (data) {
 
     if (data.status = 'alert') {
       $rootScope.alarm_status = data.status;
@@ -209,7 +209,7 @@ angular.module('starter.controllers', ['socket-io'])
       if (devices[i].device_type[j] == "gateway") {
         var command = devices[i];
         command.mode = "start";
-        devices[i].stream_started = false;
+        devices[i].stream_started = 0;
         relay_socket.emit('ffmpeg',command);
         gateways.push( devices[i] );
       }
@@ -241,7 +241,6 @@ angular.module('starter.controllers', ['socket-io'])
       }
     }
     relay_socket.emit('get settings',{token:$rootScope.token});
-    //relay_socket.emit('start stream',{token:$rootScope.token});
     $scope.$apply(function () {
       $rootScope.gateways = gateways;
       $rootScope.cameras = cameras;
@@ -269,42 +268,22 @@ angular.module('starter.controllers', ['socket-io'])
     $rootScope.mobile = mobile;
     $rootScope.update_map(data);
   });
-
-  relay_socket.on('set location', function (data) {
-    console.log('set location',data);
-    var mac = data.mac;
-    var mobile = $rootScope.mobile;
-    for (var i = 0; i < mobile.length; i++) {
-      if (mac === mobile[i].mac) {
-        mobile[i].latitude = data.latitude;
-        mobile[i].longitude = data.longitude;
-        mobile[i].speed = data.speed;
-        mobile[i].accuracy = data.accuracy;
-      }
-    }
-    $rootScope.mobile = mobile;
-    $rootScope.update_map(data);
-  });
-
   //var camera_socket_connected = false;
   relay_socket.on('load settings', function (data) {
     load_settings(data);
+    for (var i = 0; i < gateways.length; i++) {
+      if (gateways[i].stream_started > 3) {
+        console.log('stream already started',gateways[i].stream_started);
+        continue;
+      }
+      gateways[i].camera_socket = new WebSocket( 'ws://24.253.223.242:8084' );
+      gateways[i].canvas = document.getElementById('videoCanvas_'+gateways[i].mac);
+      gateways[i].player = new jsmpeg(gateways[i].camera_socket, {canvas:gateways[i].canvas,token:gateways[i].token});
+      console.log('token for video stream',gateways[i].token);
+      gateways[i].stream_started++;
+    }
     console.log('load settings',data);
   });
-
-
-  relay_socket.on('ffmpeg started', function (data) {
-    setTimeout(function () {  
-      var gateways = $rootScope.gateways;
-      var index = $scope.find_index(gateways,"token",data.token);
-      //if (gateways[index].stream_started) return console.log("stream already started",data);
-      gateways[index].camera_socket = new WebSocket( 'ws://24.253.223.242:8084' );
-      gateways[index].canvas = document.getElementById('videoCanvas_'+gateways[index].mac);
-      gateways[index].player = new jsmpeg(gateways[index].camera_socket, {canvas:gateways[index].canvas,token:gateways[index].token});
-      console.log('ffmpeg started',gateways[index]);
-    }, 500);
-  });
-
 
   relay_socket.on('load devices', function (data) {
     //load_settings(data);
@@ -501,7 +480,7 @@ angular.module('starter.controllers', ['socket-io'])
 
 
 
-/*var image = new Image(200,200);
+var image = new Image(200,200);
 image.src = 'images/sample.png';
 image.addEventListener('load', function() {
     var vibrant = new Vibrant(img);
@@ -509,7 +488,16 @@ image.addEventListener('load', function() {
     for (var swatch in swatches)
         if (swatches.hasOwnProperty(swatch) && swatches[swatch])
             console.log(swatch, swatches[swatch].getHex())
-});*/
+
+    /*
+     * Results into:
+     * Vibrant #7a4426
+     * Muted #7b9eae
+     * DarkVibrant #348945
+     * DarkMuted #141414
+     * LightVibrant #f3ccb4
+     */
+});
 
 /*new Vibrant(
     image,
@@ -1109,7 +1097,7 @@ function disable_update() {
     marker.setMap($rootScope.map);
     console.log("<----- initialize_map -----> Lat: ",$rootScope.ipLatitude);
   }
-  $rootScope.initialize_map();
+
   $rootScope.update_map = function (device) {
     mobile = $rootScope.mobile;
     device_str = JSON.stringify(device);
@@ -1225,4 +1213,5 @@ function post_enabler() {
     return angular.isObject(data) && String(data) !== '[object File]' ? param(data) : data;
   }]; 
 }
+
 
